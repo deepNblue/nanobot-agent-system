@@ -19,16 +19,14 @@ from dataclasses import dataclass, asdict
 from collections import defaultdict
 
 # 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class Practice:
     """最佳实践数据结构"""
+
     id: Optional[int]
     title: str
     category: str
@@ -42,7 +40,7 @@ class Practice:
     language: str = "python"
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
-    
+
     def __post_init__(self):
         if self.tags is None:
             self.tags = []
@@ -55,6 +53,7 @@ class Practice:
 @dataclass
 class PracticeUsage:
     """实践使用记录"""
+
     id: Optional[int]
     practice_id: int
     used_in_project: str
@@ -66,7 +65,7 @@ class PracticeUsage:
 
 class BestPracticesLibrary:
     """最佳实践库"""
-    
+
     # 预定义分类
     CATEGORIES = [
         "design_patterns",
@@ -83,42 +82,59 @@ class BestPracticesLibrary:
         "configuration",
         "deployment",
         "refactoring",
-        "general"
+        "general",
     ]
-    
+
     # 预定义标签
     COMMON_TAGS = [
-        "python", "async", "testing", "security", "performance",
-        "clean-code", "solid", "dry", "kiss", "yagni",
-        "type-hints", "documentation", "error-handling",
-        "logging", "caching", "database", "api", "rest",
-        "microservices", "docker", "ci-cd", "refactoring"
+        "python",
+        "async",
+        "testing",
+        "security",
+        "performance",
+        "clean-code",
+        "solid",
+        "dry",
+        "kiss",
+        "yagni",
+        "type-hints",
+        "documentation",
+        "error-handling",
+        "logging",
+        "caching",
+        "database",
+        "api",
+        "rest",
+        "microservices",
+        "docker",
+        "ci-cd",
+        "refactoring",
     ]
-    
+
     def __init__(self, db_path: str = "./knowledge/practices.db"):
         """
         初始化最佳实践库
-        
+
         Args:
             db_path: 数据库路径
         """
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         # 设置数据库
         self.setup_database()
-        
+
         # 缓存
         self._category_cache: Dict[str, List[Dict]] = {}
         self._tag_cache: Dict[str, List[Dict]] = {}
-        
+
         logger.info(f"BestPracticesLibrary initialized at {db_path}")
-    
+
     def setup_database(self):
         """设置数据库"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
         # 实践表
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS practices (
@@ -137,7 +153,7 @@ class BestPracticesLibrary:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
+
         # 使用记录表
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS practice_usage (
@@ -151,7 +167,7 @@ class BestPracticesLibrary:
                 FOREIGN KEY (practice_id) REFERENCES practices(id) ON DELETE CASCADE
             )
         """)
-        
+
         # 反馈表
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS practice_feedback (
@@ -163,214 +179,225 @@ class BestPracticesLibrary:
                 FOREIGN KEY (practice_id) REFERENCES practices(id) ON DELETE CASCADE
             )
         """)
-        
+
         # 创建索引
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_practices_category 
             ON practices(category)
         """)
-        
+
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_practices_quality 
             ON practices(quality_score DESC)
         """)
-        
+
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_usage_practice 
             ON practice_usage(practice_id)
         """)
-        
+
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_usage_project 
             ON practice_usage(used_in_project)
         """)
-        
+
         conn.commit()
         conn.close()
-        
+
         logger.info("Database setup completed")
-    
+
     async def add_practice(self, practice: Dict[str, Any]) -> int:
         """
         添加最佳实践
-        
+
         Args:
             practice: 实践数据
-            
+
         Returns:
             实践ID
         """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
         try:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO practices 
                 (title, category, description, code_example, tags, quality_score, 
                  source, author, difficulty, language)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                practice["title"],
-                practice["category"],
-                practice.get("description", ""),
-                practice.get("code_example", ""),
-                json.dumps(practice.get("tags", [])),
-                practice.get("quality_score", 0.0),
-                practice.get("source"),
-                practice.get("author"),
-                practice.get("difficulty", "medium"),
-                practice.get("language", "python")
-            ))
-            
+            """,
+                (
+                    practice["title"],
+                    practice["category"],
+                    practice.get("description", ""),
+                    practice.get("code_example", ""),
+                    json.dumps(practice.get("tags", [])),
+                    practice.get("quality_score", 0.0),
+                    practice.get("source"),
+                    practice.get("author"),
+                    practice.get("difficulty", "medium"),
+                    practice.get("language", "python"),
+                ),
+            )
+
             practice_id = cursor.lastrowid
             conn.commit()
-            
+
             # 清除缓存
             self._clear_cache()
-            
+
             logger.info(f"Added practice: {practice['title']} (ID: {practice_id})")
-            
+
             return practice_id
-            
+
         except Exception as e:
             logger.error(f"Error adding practice: {e}")
             conn.rollback()
             raise
         finally:
             conn.close()
-    
+
     async def add_practices_batch(self, practices: List[Dict[str, Any]]) -> List[int]:
         """
         批量添加最佳实践
-        
+
         Args:
             practices: 实践列表
-            
+
         Returns:
             实践ID列表
         """
         practice_ids = []
-        
+
         for practice in practices:
             practice_id = await self.add_practice(practice)
             practice_ids.append(practice_id)
-        
+
         return practice_ids
-    
+
     async def get_practice(self, practice_id: int) -> Optional[Dict[str, Any]]:
         """
         获取单个实践
-        
+
         Args:
             practice_id: 实践ID
-            
+
         Returns:
             实践数据
         """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
         try:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT * FROM practices WHERE id = ?
-            """, (practice_id,))
-            
+            """,
+                (practice_id,),
+            )
+
             row = cursor.fetchone()
-            
+
             if row:
                 return self._row_to_dict(row)
-            
+
             return None
-            
+
         finally:
             conn.close()
-    
-    async def update_practice(
-        self,
-        practice_id: int,
-        updates: Dict[str, Any]
-    ) -> bool:
+
+    async def update_practice(self, practice_id: int, updates: Dict[str, Any]) -> bool:
         """
         更新实践
-        
+
         Args:
             practice_id: 实践ID
             updates: 更新数据
-            
+
         Returns:
             是否成功
         """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
         try:
             # 构建更新语句
             set_clauses = []
             params = []
-            
+
             for key, value in updates.items():
-                if key in ["title", "category", "description", "code_example", 
-                          "quality_score", "source", "author", "difficulty", "language"]:
+                if key in [
+                    "title",
+                    "category",
+                    "description",
+                    "code_example",
+                    "quality_score",
+                    "source",
+                    "author",
+                    "difficulty",
+                    "language",
+                ]:
                     if key == "tags":
                         value = json.dumps(value)
                     set_clauses.append(f"{key} = ?")
                     params.append(value)
-            
+
             if not set_clauses:
                 return False
-            
+
             # 添加更新时间
             set_clauses.append("updated_at = ?")
             params.append(datetime.now().isoformat())
-            
+
             params.append(practice_id)
-            
+
             sql = f"UPDATE practices SET {', '.join(set_clauses)} WHERE id = ?"
             cursor.execute(sql, params)
-            
+
             conn.commit()
-            
+
             # 清除缓存
             self._clear_cache()
-            
+
             return cursor.rowcount > 0
-            
+
         except Exception as e:
             logger.error(f"Error updating practice: {e}")
             conn.rollback()
             return False
         finally:
             conn.close()
-    
+
     async def delete_practice(self, practice_id: int) -> bool:
         """
         删除实践
-        
+
         Args:
             practice_id: 实践ID
-            
+
         Returns:
             是否成功
         """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
         try:
             cursor.execute("DELETE FROM practices WHERE id = ?", (practice_id,))
             conn.commit()
-            
+
             # 清除缓存
             self._clear_cache()
-            
+
             return cursor.rowcount > 0
-            
+
         except Exception as e:
             logger.error(f"Error deleting practice: {e}")
             conn.rollback()
             return False
         finally:
             conn.close()
-    
+
     async def search_practices(
         self,
         query: str = None,
@@ -380,11 +407,11 @@ class BestPracticesLibrary:
         language: str = None,
         min_quality: float = None,
         limit: int = 10,
-        offset: int = 0
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """
         搜索最佳实践
-        
+
         Args:
             query: 搜索关键词
             category: 分类
@@ -394,73 +421,69 @@ class BestPracticesLibrary:
             min_quality: 最低质量分
             limit: 返回数量限制
             offset: 偏移量
-            
+
         Returns:
             实践列表
         """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
         try:
             sql = "SELECT * FROM practices WHERE 1=1"
             params = []
-            
+
             # 关键词搜索
             if query:
                 sql += " AND (title LIKE ? OR description LIKE ? OR code_example LIKE ?)"
                 search_term = f"%{query}%"
                 params.extend([search_term, search_term, search_term])
-            
+
             # 分类过滤
             if category:
                 sql += " AND category = ?"
                 params.append(category)
-            
+
             # 标签过滤
             if tags:
                 # 简化版：只检查第一个标签
                 sql += " AND tags LIKE ?"
                 params.append(f"%{tags[0]}%")
-            
+
             # 难度过滤
             if difficulty:
                 sql += " AND difficulty = ?"
                 params.append(difficulty)
-            
+
             # 语言过滤
             if language:
                 sql += " AND language = ?"
                 params.append(language)
-            
+
             # 质量分过滤
             if min_quality is not None:
                 sql += " AND quality_score >= ?"
                 params.append(min_quality)
-            
+
             # 排序和分页
             sql += " ORDER BY quality_score DESC, created_at DESC LIMIT ? OFFSET ?"
             params.extend([limit, offset])
-            
+
             cursor.execute(sql, params)
             rows = cursor.fetchall()
-            
+
             return [self._row_to_dict(row) for row in rows]
-            
+
         finally:
             conn.close()
-    
-    async def get_practices_by_category(
-        self,
-        category: str,
-        limit: int = 10
-    ) -> List[Dict[str, Any]]:
+
+    async def get_practices_by_category(self, category: str, limit: int = 10) -> List[Dict[str, Any]]:
         """
         按分类获取实践
-        
+
         Args:
             category: 分类名称
             limit: 返回数量
-            
+
         Returns:
             实践列表
         """
@@ -468,164 +491,160 @@ class BestPracticesLibrary:
         cache_key = f"{category}_{limit}"
         if cache_key in self._category_cache:
             return self._category_cache[cache_key]
-        
-        practices = await self.search_practices(
-            category=category,
-            limit=limit
-        )
-        
+
+        practices = await self.search_practices(category=category, limit=limit)
+
         # 更新缓存
         self._category_cache[cache_key] = practices
-        
+
         return practices
-    
-    async def get_practices_by_tags(
-        self,
-        tags: List[str],
-        limit: int = 10
-    ) -> List[Dict[str, Any]]:
+
+    async def get_practices_by_tags(self, tags: List[str], limit: int = 10) -> List[Dict[str, Any]]:
         """
         按标签获取实践
-        
+
         Args:
             tags: 标签列表
             limit: 返回数量
-            
+
         Returns:
             实践列表
         """
         return await self.search_practices(tags=tags, limit=limit)
-    
+
     async def record_usage(
-        self,
-        practice_id: int,
-        project: str,
-        effectiveness: float = 0.0,
-        notes: str = None,
-        context: str = None
+        self, practice_id: int, project: str, effectiveness: float = 0.0, notes: str = None, context: str = None
     ) -> int:
         """
         记录使用情况
-        
+
         Args:
             practice_id: 实践ID
             project: 项目名称
             effectiveness: 有效性评分 (0-1)
             notes: 备注
             context: 上下文
-            
+
         Returns:
             记录ID
         """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
         try:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO practice_usage 
                 (practice_id, used_in_project, effectiveness_score, notes, context)
                 VALUES (?, ?, ?, ?, ?)
-            """, (practice_id, project, effectiveness, notes, context))
-            
+            """,
+                (practice_id, project, effectiveness, notes, context),
+            )
+
             usage_id = cursor.lastrowid
-            
+
             # 更新实践的质量分（基于平均有效性）
             await self._update_quality_score(practice_id)
-            
+
             conn.commit()
-            
+
             logger.info(f"Recorded usage of practice {practice_id} in {project}")
-            
+
             return usage_id
-            
+
         except Exception as e:
             logger.error(f"Error recording usage: {e}")
             conn.rollback()
             raise
         finally:
             conn.close()
-    
+
     async def _update_quality_score(self, practice_id: int):
         """更新实践质量分"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
         try:
             # 计算平均有效性
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT AVG(effectiveness_score) 
                 FROM practice_usage 
                 WHERE practice_id = ?
-            """, (practice_id,))
-            
+            """,
+                (practice_id,),
+            )
+
             result = cursor.fetchone()
             avg_effectiveness = result[0] if result[0] else 0.0
-            
+
             # 更新质量分
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE practices 
                 SET quality_score = ? 
                 WHERE id = ?
-            """, (avg_effectiveness, practice_id))
-            
+            """,
+                (avg_effectiveness, practice_id),
+            )
+
             conn.commit()
-            
+
         finally:
             conn.close()
-    
-    async def add_feedback(
-        self,
-        practice_id: int,
-        rating: int,
-        comment: str = None
-    ) -> int:
+
+    async def add_feedback(self, practice_id: int, rating: int, comment: str = None) -> int:
         """
         添加反馈
-        
+
         Args:
             practice_id: 实践ID
             rating: 评分 (1-5)
             comment: 评论
-            
+
         Returns:
             反馈ID
         """
         if not 1 <= rating <= 5:
             raise ValueError("Rating must be between 1 and 5")
-        
+
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
         try:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO practice_feedback 
                 (practice_id, rating, comment)
                 VALUES (?, ?, ?)
-            """, (practice_id, rating, comment))
-            
+            """,
+                (practice_id, rating, comment),
+            )
+
             feedback_id = cursor.lastrowid
             conn.commit()
-            
+
             return feedback_id
-            
+
         finally:
             conn.close()
-    
+
     async def get_popular_practices(self, limit: int = 10) -> List[Dict[str, Any]]:
         """
         获取热门最佳实践
-        
+
         Args:
             limit: 返回数量
-            
+
         Returns:
             实践列表
         """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
         try:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT 
                     p.*,
                     COUNT(u.id) as usage_count,
@@ -635,64 +654,70 @@ class BestPracticesLibrary:
                 GROUP BY p.id
                 ORDER BY usage_count DESC, avg_effectiveness DESC, p.quality_score DESC
                 LIMIT ?
-            """, (limit,))
-            
+            """,
+                (limit,),
+            )
+
             rows = cursor.fetchall()
-            
+
             practices = []
             for row in rows:
                 practice = self._row_to_dict(row[:13])  # 基础字段
                 practice["usage_count"] = row[13] if len(row) > 13 else 0
                 practice["avg_effectiveness"] = row[14] if len(row) > 14 and row[14] else 0.0
                 practices.append(practice)
-            
+
             return practices
-            
+
         finally:
             conn.close()
-    
+
     async def get_recent_practices(self, limit: int = 10) -> List[Dict[str, Any]]:
         """
         获取最近的实践
-        
+
         Args:
             limit: 返回数量
-            
+
         Returns:
             实践列表
         """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
         try:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT * FROM practices
                 ORDER BY created_at DESC
                 LIMIT ?
-            """, (limit,))
-            
+            """,
+                (limit,),
+            )
+
             rows = cursor.fetchall()
-            
+
             return [self._row_to_dict(row) for row in rows]
-            
+
         finally:
             conn.close()
-    
+
     async def get_top_rated_practices(self, limit: int = 10) -> List[Dict[str, Any]]:
         """
         获取评分最高的实践
-        
+
         Args:
             limit: 返回数量
-            
+
         Returns:
             实践列表
         """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
         try:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT 
                     p.*,
                     AVG(f.rating) as avg_rating,
@@ -703,82 +728,93 @@ class BestPracticesLibrary:
                 HAVING rating_count > 0
                 ORDER BY avg_rating DESC, rating_count DESC
                 LIMIT ?
-            """, (limit,))
-            
+            """,
+                (limit,),
+            )
+
             rows = cursor.fetchall()
-            
+
             practices = []
             for row in rows:
                 practice = self._row_to_dict(row[:13])
                 practice["avg_rating"] = row[13] if len(row) > 13 else 0.0
                 practice["rating_count"] = row[14] if len(row) > 14 else 0
                 practices.append(practice)
-            
+
             return practices
-            
+
         finally:
             conn.close()
-    
+
     async def get_practice_stats(self, practice_id: int) -> Dict[str, Any]:
         """
         获取实践统计信息
-        
+
         Args:
             practice_id: 实践ID
-            
+
         Returns:
             统计信息
         """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
         try:
             stats = {}
-            
+
             # 使用次数
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT COUNT(*) FROM practice_usage WHERE practice_id = ?
-            """, (practice_id,))
+            """,
+                (practice_id,),
+            )
             stats["usage_count"] = cursor.fetchone()[0]
-            
+
             # 平均有效性
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT AVG(effectiveness_score) FROM practice_usage WHERE practice_id = ?
-            """, (practice_id,))
+            """,
+                (practice_id,),
+            )
             result = cursor.fetchone()
             stats["avg_effectiveness"] = result[0] if result[0] else 0.0
-            
+
             # 平均评分
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT AVG(rating), COUNT(*) FROM practice_feedback WHERE practice_id = ?
-            """, (practice_id,))
+            """,
+                (practice_id,),
+            )
             result = cursor.fetchone()
             stats["avg_rating"] = result[0] if result[0] else 0.0
             stats["rating_count"] = result[1]
-            
+
             # 最近使用
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT used_in_project, used_at 
                 FROM practice_usage 
                 WHERE practice_id = ?
                 ORDER BY used_at DESC
                 LIMIT 5
-            """, (practice_id,))
-            stats["recent_usage"] = [
-                {"project": row[0], "used_at": row[1]}
-                for row in cursor.fetchall()
-            ]
-            
+            """,
+                (practice_id,),
+            )
+            stats["recent_usage"] = [{"project": row[0], "used_at": row[1]} for row in cursor.fetchall()]
+
             return stats
-            
+
         finally:
             conn.close()
-    
+
     async def get_all_categories(self) -> List[Dict[str, Any]]:
         """获取所有分类及其统计"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
         try:
             cursor.execute("""
                 SELECT 
@@ -789,30 +825,23 @@ class BestPracticesLibrary:
                 GROUP BY category
                 ORDER BY practice_count DESC
             """)
-            
+
             rows = cursor.fetchall()
-            
-            return [
-                {
-                    "category": row[0],
-                    "practice_count": row[1],
-                    "avg_quality": row[2] if row[2] else 0.0
-                }
-                for row in rows
-            ]
-            
+
+            return [{"category": row[0], "practice_count": row[1], "avg_quality": row[2] if row[2] else 0.0} for row in rows]
+
         finally:
             conn.close()
-    
+
     async def get_all_tags(self, limit: int = 50) -> List[Dict[str, Any]]:
         """获取所有标签及其统计"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
         try:
             cursor.execute("SELECT tags FROM practices")
             rows = cursor.fetchall()
-            
+
             # 统计标签
             tag_counts = defaultdict(int)
             for row in rows:
@@ -820,78 +849,60 @@ class BestPracticesLibrary:
                     tags = json.loads(row[0])
                     for tag in tags:
                         tag_counts[tag] += 1
-            
+
             # 排序
-            sorted_tags = sorted(
-                tag_counts.items(),
-                key=lambda x: x[1],
-                reverse=True
-            )[:limit]
-            
-            return [
-                {"tag": tag, "count": count}
-                for tag, count in sorted_tags
-            ]
-            
+            sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:limit]
+
+            return [{"tag": tag, "count": count} for tag, count in sorted_tags]
+
         finally:
             conn.close()
-    
-    async def export_practices(
-        self,
-        category: str = None,
-        format: str = "json"
-    ) -> str:
+
+    async def export_practices(self, category: str = None, format: str = "json") -> str:
         """
         导出实践
-        
+
         Args:
             category: 分类（可选）
             format: 格式 (json, markdown)
-            
+
         Returns:
             导出内容
         """
-        practices = await self.search_practices(
-            category=category,
-            limit=1000
-        )
-        
+        practices = await self.search_practices(category=category, limit=1000)
+
         if format == "json":
             return json.dumps(practices, indent=2, ensure_ascii=False)
-        
+
         elif format == "markdown":
             lines = ["# Best Practices Library\n"]
-            
+
             for practice in practices:
                 lines.append(f"## {practice['title']}\n")
                 lines.append(f"**Category:** {practice['category']}\n")
                 lines.append(f"**Description:** {practice['description']}\n")
-                
-                if practice.get('code_example'):
+
+                if practice.get("code_example"):
                     lines.append(f"**Example:**\n```{practice.get('language', 'python')}\n{practice['code_example']}\n```\n")
-                
-                if practice.get('tags'):
+
+                if practice.get("tags"):
                     lines.append(f"**Tags:** {', '.join(practice['tags'])}\n")
-                
+
                 lines.append("\n---\n")
-            
-            return '\n'.join(lines)
-        
+
+            return "\n".join(lines)
+
         else:
             raise ValueError(f"Unsupported format: {format}")
-    
-    async def import_practices(
-        self,
-        data: str,
-        format: str = "json"
-    ) -> int:
+
+    async def import_practices(self, data: str, format: str = "json") -> int:
         """
         导入实践
-        
+
         Args:
             data: 数据内容
             format: 格式
-            
+
         Returns:
             导入数量
         """
@@ -899,7 +910,7 @@ class BestPracticesLibrary:
             practices = json.loads(data)
         else:
             raise ValueError(f"Unsupported format: {format}")
-        
+
         count = 0
         for practice in practices:
             try:
@@ -907,9 +918,9 @@ class BestPracticesLibrary:
                 count += 1
             except Exception as e:
                 logger.error(f"Error importing practice: {e}")
-        
+
         return count
-    
+
     def _row_to_dict(self, row: tuple) -> Dict[str, Any]:
         """将数据库行转换为字典"""
         return {
@@ -925,45 +936,45 @@ class BestPracticesLibrary:
             "difficulty": row[9],
             "language": row[10],
             "created_at": row[11],
-            "updated_at": row[12]
+            "updated_at": row[12],
         }
-    
+
     def _clear_cache(self):
         """清除缓存"""
         self._category_cache.clear()
         self._tag_cache.clear()
-    
+
     async def get_stats(self) -> Dict[str, Any]:
         """获取库统计信息"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
         try:
             stats = {}
-            
+
             # 总实践数
             cursor.execute("SELECT COUNT(*) FROM practices")
             stats["total_practices"] = cursor.fetchone()[0]
-            
+
             # 总使用次数
             cursor.execute("SELECT COUNT(*) FROM practice_usage")
             stats["total_usage"] = cursor.fetchone()[0]
-            
+
             # 总反馈数
             cursor.execute("SELECT COUNT(*) FROM practice_feedback")
             stats["total_feedback"] = cursor.fetchone()[0]
-            
+
             # 平均质量分
             cursor.execute("SELECT AVG(quality_score) FROM practices")
             result = cursor.fetchone()
             stats["avg_quality"] = result[0] if result[0] else 0.0
-            
+
             # 分类数
             cursor.execute("SELECT COUNT(DISTINCT category) FROM practices")
             stats["category_count"] = cursor.fetchone()[0]
-            
+
             return stats
-            
+
         finally:
             conn.close()
 
@@ -977,7 +988,7 @@ DEFAULT_PRACTICES = [
         "code_example": "def greet(name: str) -> str:\n    return f'Hello, {name}'",
         "tags": ["python", "type-hints", "clean-code"],
         "difficulty": "easy",
-        "quality_score": 0.9
+        "quality_score": 0.9,
     },
     {
         "title": "Write Unit Tests",
@@ -986,7 +997,7 @@ DEFAULT_PRACTICES = [
         "code_example": "def test_greet():\n    assert greet('World') == 'Hello, World'",
         "tags": ["testing", "python", "quality"],
         "difficulty": "easy",
-        "quality_score": 0.95
+        "quality_score": 0.95,
     },
     {
         "title": "Use Dependency Injection",
@@ -995,7 +1006,7 @@ DEFAULT_PRACTICES = [
         "code_example": "class Service:\n    def __init__(self, repository: Repository):\n        self.repo = repository",
         "tags": ["design-patterns", "testing", "solid"],
         "difficulty": "medium",
-        "quality_score": 0.85
+        "quality_score": 0.85,
     },
     {
         "title": "Handle Exceptions Properly",
@@ -1004,7 +1015,7 @@ DEFAULT_PRACTICES = [
         "code_example": "try:\n    result = risky_operation()\nexcept ValueError as e:\n    logger.error(f'Invalid value: {e}')\n    raise",
         "tags": ["error-handling", "python", "clean-code"],
         "difficulty": "easy",
-        "quality_score": 0.9
+        "quality_score": 0.9,
     },
     {
         "title": "Use Async for I/O Operations",
@@ -1013,8 +1024,8 @@ DEFAULT_PRACTICES = [
         "code_example": "async def fetch_data(url: str) -> dict:\n    async with aiohttp.ClientSession() as session:\n        async with session.get(url) as response:\n            return await response.json()",
         "tags": ["async", "performance", "python"],
         "difficulty": "medium",
-        "quality_score": 0.85
-    }
+        "quality_score": 0.85,
+    },
 ]
 
 
@@ -1029,24 +1040,24 @@ async def initialize_default_practices(library: BestPracticesLibrary):
 
 if __name__ == "__main__":
     import asyncio
-    
+
     async def main():
         # 示例用法
         library = BestPracticesLibrary("./knowledge/practices.db")
-        
+
         # 初始化默认实践
         await initialize_default_practices(library)
-        
+
         # 搜索实践
         results = await library.search_practices("testing")
         print(f"Found {len(results)} practices about testing")
-        
+
         # 获取热门实践
         popular = await library.get_popular_practices(5)
         print(f"Top 5 popular practices: {[p['title'] for p in popular]}")
-        
+
         # 获取统计
         stats = await library.get_stats()
         print(f"Library stats: {stats}")
-    
+
     asyncio.run(main())
