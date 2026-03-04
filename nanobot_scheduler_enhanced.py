@@ -357,7 +357,7 @@ class NanobotOrchestratorEnhanced:
         Returns:
             Markdown格式的报告
         """
-        report = await self.task_monitor.generate_report()
+        report = self.task_monitor.generate_report()
         return report
     
     def _get_default_command_template(self, agent_type: str) -> str:
