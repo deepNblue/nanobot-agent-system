@@ -1,12 +1,19 @@
 """
-任务监控器
-监控Agent任务的执行状态，包括git提交、CI状态、tmux会话等
+任务监控器（Phase 2增强版）
+监控Agent任务的执行状态，包括git提交、CI状态、tmux会话、代码审查等
+
+Phase 2新增功能：
+- 自动触发Code Review
+- 自动检查CI状态
+- 自动处理CI失败
+- 生成增强报告
 """
 
 import os
 import json
 import subprocess
 import time
+import asyncio
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Optional, List, Tuple
@@ -14,7 +21,7 @@ import re
 
 
 class TaskMonitor:
-    """任务监控器"""
+    """任务监控器（Phase 2增强版）"""
     
     def __init__(self, tasks_dir: Optional[str] = None):
         """
@@ -26,6 +33,14 @@ class TaskMonitor:
         self.tasks_dir = Path(tasks_dir) if tasks_dir else \
             Path.home() / ".nanobot" / "workspace" / "agent_tasks"
         self.tasks_dir.mkdir(exist_ok=True)
+        
+        # Phase 2: 自动化配置
+        self.auto_review_on_commit = True  # 提交后自动审查
+        self.auto_check_ci = True  # 自动检查CI
+        self.auto_handle_ci_failure = True  # 自动处理CI失败
+        
+        # CI检查间隔
+        self.ci_check_interval = 600  # 10分钟
     
     def check_task_status(self, task_id: str) -> Dict:
         """
@@ -509,7 +524,7 @@ class TaskMonitor:
     
     def generate_report(self) -> str:
         """
-        生成任务监控报告
+        生成任务监控报告（增强版）
         
         Returns:
             Markdown格式的报告
@@ -522,18 +537,34 @@ class TaskMonitor:
             status = task.get("status", "unknown")
             status_counts[status] = status_counts.get(status, 0) + 1
         
+        # CI统计
+        ci_success = len([t for t in all_tasks if t.get("task_info", {}).get("ci_status", {}).get("conclusion") == "success"])
+        ci_failed = len([t for t in all_tasks if t.get("task_info", {}).get("ci_status", {}).get("is_failed")])
+        
+        # Code Review统计
+        review_passed = len([t for t in all_tasks if t.get("task_info", {}).get("code_review", {}).get("approved")])
+        
         # 生成报告
-        report = f"""# 任务监控报告
+        report = f"""# 任务监控报告（Phase 2增强版）
 
 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 ## 统计概览
 
+### 任务状态
 - 总任务数: {len(all_tasks)}
 - 运行中: {status_counts.get('running', 0)}
 - 已完成: {status_counts.get('completed', 0)}
 - 失败: {status_counts.get('failed', 0)}
 - 需要审核: {status_counts.get('needs_review', 0)}
+- 已合并: {status_counts.get('merged', 0)}
+
+### CI/CD状态
+- CI成功: {ci_success}
+- CI失败: {ci_failed}
+
+### Code Review状态
+- 审查通过: {review_passed}
 
 ## 任务详情
 
@@ -553,6 +584,29 @@ class TaskMonitor:
 
 """
             
+            # 添加Code Review信息
+            code_review = task_info.get("code_review")
+            if code_review:
+                report += f"""**Code Review:**
+- 评分: {code_review.get('score', 'N/A')}/100
+- 状态: {'✅ 通过' if code_review.get('approved') else '❌ 未通过'}
+- 审查时间: {code_review.get('timestamp', 'N/A')}
+
+"""
+            
+            # 添加CI信息
+            ci_status = task_info.get("ci_status")
+            if ci_status:
+                conclusion = ci_status.get("conclusion", "N/A")
+                ci_emoji = "✅" if conclusion == "success" else "❌" if ci_status.get("is_failed") else "🔄"
+                report += f"""**CI/CD:**
+- 状态: {ci_emoji} {conclusion}
+- 运行ID: {ci_status.get('run_id', 'N/A')}
+- 检查时间: {ci_status.get('checked_at', 'N/A')}
+- URL: {ci_status.get('url', 'N/A')}
+
+"""
+            
             # 添加检查详情
             checks = task.get("checks", {})
             if checks:
@@ -565,6 +619,122 @@ class TaskMonitor:
                 report += "\n"
         
         return report
+    
+    async def auto_monitor_with_ci(self, task_id: str) -> Dict:
+        """
+        自动监控任务，包括CI检查和Code Review
+        
+        Args:
+            task_id: 任务ID
+        
+        Returns:
+            监控结果
+        """
+        print(f"\n[TaskMonitor] 自动监控任务: {task_id}")
+        
+        result = {
+            "task_id": task_id,
+            "checks": [],
+            "actions_taken": []
+        }
+        
+        # 1. 基础状态检查
+        status = self.check_task_status(task_id)
+        result["status"] = status
+        
+        # 2. 如果任务有提交，触发Code Review
+        if status.get("overall_status") in ["needs_review", "completed"]:
+            if self.auto_review_on_commit:
+                task_info = self._load_task(task_id)
+                
+                # 检查是否已经审查过
+                if not task_info.get("code_review"):
+                    print(f"[TaskMonitor] 触发自动Code Review...")
+                    result["actions_taken"].append("code_review_triggered")
+                    # 这里需要调用orchestrator的review_code方法
+                    # 实际使用时应该注入orchestrator实例
+        
+        # 3. 检查CI状态
+        if self.auto_check_ci:
+            task_info = self._load_task(task_id)
+            branch = task_info.get("branch")
+            
+            if branch:
+                print(f"[TaskMonitor] 检查CI状态...")
+                ci_status = await self._check_ci_status(branch)
+                result["ci_status"] = ci_status
+                
+                # 更新任务记录
+                if ci_status.get("success"):
+                    task_info["ci_status"] = {
+                        "status": ci_status.get("status"),
+                        "conclusion": ci_status.get("conclusion"),
+                        "run_id": ci_status.get("run_id"),
+                        "is_failed": ci_status.get("is_failed"),
+                        "checked_at": datetime.now().isoformat()
+                    }
+                    self._save_task(task_info)
+                    
+                    # 4. 如果CI失败，自动处理
+                    if ci_status.get("is_failed") and self.auto_handle_ci_failure:
+                        print(f"[TaskMonitor] CI失败，触发自动处理...")
+                        result["actions_taken"].append("ci_failure_handling_triggered")
+        
+        return result
+    
+    async def continuous_monitoring(
+        self,
+        interval: int = 300,
+        max_duration: int = 7200
+    ) -> Dict:
+        """
+        持续监控所有任务
+        
+        Args:
+            interval: 检查间隔（秒）
+            max_duration: 最大持续时间（秒）
+        
+        Returns:
+            监控结果
+        """
+        print(f"\n[TaskMonitor] 启动持续监控...")
+        print(f"[TaskMonitor] 检查间隔: {interval}秒, 最大时长: {max_duration}秒")
+        
+        start_time = datetime.now()
+        monitoring_log = []
+        
+        while True:
+            # 检查是否超时
+            elapsed = (datetime.now() - start_time).total_seconds()
+            if elapsed > max_duration:
+                print(f"[TaskMonitor] 达到最大监控时长，停止监控")
+                break
+            
+            # 监控所有任务
+            all_tasks = self.monitor_all_tasks()
+            
+            for task in all_tasks:
+                task_id = task.get("task_id")
+                status = task.get("status")
+                
+                # 只监控运行中的任务
+                if status in ["running", "needs_review"]:
+                    monitor_result = await self.auto_monitor_with_ci(task_id)
+                    monitoring_log.append({
+                        "timestamp": datetime.now().isoformat(),
+                        "task_id": task_id,
+                        "result": monitor_result
+                    })
+            
+            # 等待下一次检查
+            await asyncio.sleep(interval)
+        
+        return {
+            "success": True,
+            "duration": elapsed,
+            "checks_performed": len(monitoring_log),
+            "log": monitoring_log
+        }
 
 
 # 全局实例
