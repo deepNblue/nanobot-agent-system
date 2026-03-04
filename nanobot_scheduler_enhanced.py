@@ -1,6 +1,6 @@
 """
-Nanobot AI Agent系统 - 增强版编排层（Phase 2）
-整合Worktree、Tmux、Monitor、Code Review、CI/CD和自动化工作流
+Nanobot AI Agent系统 - 增强版编排层（Phase 2 & Phase 3）
+整合Worktree、Tmux、Monitor、Code Review、CI/CD、自动化工作流和可视化Dashboard
 
 架构：
 - Worktree: 每个任务独立隔离的git worktree
@@ -10,6 +10,7 @@ Nanobot AI Agent系统 - 增强版编排层（Phase 2）
 - CI/CD: GitHub Actions集成（状态检查、失败分析、自动重试）
 - Requirement Extraction: 从Obsidian自动提取需求
 - Task Decomposition: 智能任务分解和Agent分配
+- Dashboard: 实时可视化监控（Phase 3）
 
 Phase 2 新增功能：
 - review_code(): 代码审查
@@ -19,6 +20,13 @@ Phase 2 新增功能：
 - extract_requirements_from_obsidian(): 从Obsidian提取需求
 - decompose_requirement(): 分解需求为任务
 - run_automated_workflow(): 运行自动化工作流
+
+Phase 3 新增功能：
+- Dashboard集成：实时可视化监控
+- WebSocket实时更新
+- 统计数据展示
+- 性能指标分析
+- 错误日志追踪
 """
 
 import os
@@ -38,6 +46,7 @@ try:
     from .cicd_integration import get_cicd_integration, CICDIntegration
     from .requirement_extractor import get_requirement_extractor, RequirementExtractor
     from .task_decomposer import get_task_decomposer, TaskDecomposer
+    from .pr_manager import get_pr_manager, PRManager
 except ImportError:
     # 回退到绝对导入（直接运行时）
     from worktree_manager import get_worktree_manager, WorktreeManager
@@ -47,6 +56,7 @@ except ImportError:
     from cicd_integration import get_cicd_integration, CICDIntegration
     from requirement_extractor import get_requirement_extractor, RequirementExtractor
     from task_decomposer import get_task_decomposer, TaskDecomposer
+    from pr_manager import get_pr_manager, PRManager
 
 
 class NanobotOrchestratorEnhanced:
@@ -98,6 +108,39 @@ class NanobotOrchestratorEnhanced:
         self.auto_ci_check_enabled = True  # 自动CI检查
         self.auto_retry_ci_enabled = True  # 自动重试CI
         self.auto_merge_enabled = False  # 自动合并（默认关闭，需要手动启用）
+        
+        # Phase 3: 初始化PR管理模块
+        try:
+            pr_config = {
+                "auto_merge": self.auto_merge_enabled,
+                "merge_method": "squash",
+                "require_review": True,
+                "require_ci": True,
+                "min_review_score": 80
+            }
+            self.pr_manager = get_pr_manager(pr_config, base_repo)
+        except Exception as e:
+            print(f"[Orchestrator] 警告: PR管理模块初始化失败: {e}")
+            self.pr_manager = None
+        
+        # Phase 3: PR自动化配置
+        self.auto_pr_enabled = True  # 自动创建PR（默认启用）
+        
+        # Phase 3: Dashboard配置
+        self.dashboard = None
+        self.dashboard_enabled = True  # Dashboard默认启用
+        self.dashboard_port = 5000  # Dashboard端口
+        
+        # 自动启动Dashboard
+        if self.dashboard_enabled:
+            try:
+                self.dashboard = start_dashboard(
+                    port=self.dashboard_port,
+                    tasks_dir=str(self.tasks_dir)
+                )
+                print(f"[Orchestrator] ✅ Dashboard已启动: http://localhost:{self.dashboard_port}")
+            except Exception as e:
+                print(f"[Orchestrator] 警告: Dashboard启动失败: {e}")
     
     async def create_agent_task(
         self,
@@ -921,6 +964,49 @@ class NanobotOrchestratorEnhanced:
         # 添加到历史
         if task not in self.task_history:
             self.task_history.append(task)
+        
+        # 广播任务更新到Dashboard
+        self._broadcast_task_update(task_id, task)
+    
+    def _broadcast_task_update(self, task_id: str, task: Dict):
+        """
+        广播任务更新到Dashboard
+        
+        Args:
+            task_id: 任务ID
+            task: 任务信息
+        """
+        if self.dashboard:
+            try:
+                self.dashboard.broadcast_task_update(task_id, {
+                    "status": task.get("status"),
+                    "progress": task.get("progress", 0),
+                    "description": task.get("description"),
+                    "agent": task.get("agent"),
+                    "branch": task.get("branch"),
+                    "execution_time": task.get("execution_time"),
+                    "completed_at": task.get("completedAt")
+                })
+            except Exception as e:
+                print(f"[Orchestrator] Dashboard广播失败: {e}")
+    
+    def _broadcast_error(self, error_message: str, task_id: Optional[str] = None):
+        """
+        广播错误到Dashboard
+        
+        Args:
+            error_message: 错误消息
+            task_id: 关联的任务ID（可选）
+        """
+        if self.dashboard:
+            try:
+                self.dashboard.broadcast_error({
+                    "message": error_message,
+                    "task_id": task_id,
+                    "error": error_message
+                })
+            except Exception as e:
+                print(f"[Orchestrator] Dashboard错误广播失败: {e}")
     
     # ==================== Phase 2: 需求提取和任务分解 ====================
     
@@ -1128,6 +1214,240 @@ class NanobotOrchestratorEnhanced:
             return []
         
         return self.task_decomposer.list_tasks(status)
+    
+    # ==================== Phase 3: PR自动管理 ====================
+    
+    async def auto_create_pr(self, task_id: str) -> Dict:
+        """
+        自动创建PR
+        
+        Args:
+            task_id: 任务ID
+        
+        Returns:
+            创建结果
+        """
+        if not self.pr_manager:
+            print("[Orchestrator] PR管理模块未初始化")
+            return {
+                "success": False,
+                "error": "PR管理模块未初始化"
+            }
+        
+        print(f"\n[Orchestrator] 自动创建PR: {task_id}")
+        
+        return await self.pr_manager.auto_create_pr(task_id)
+    
+    async def monitor_pr(self, pr_number: int) -> Dict:
+        """
+        监控PR状态
+        
+        Args:
+            pr_number: PR编号
+        
+        Returns:
+            PR状态
+        """
+        if not self.pr_manager:
+            return {
+                "success": False,
+                "error": "PR管理模块未初始化"
+            }
+        
+        print(f"\n[Orchestrator] 监控PR #{pr_number}")
+        
+        return await self.pr_manager.monitor_pr_status(pr_number)
+    
+    async def auto_merge_pr(self, pr_number: int) -> Dict:
+        """
+        自动合并PR
+        
+        Args:
+            pr_number: PR编号
+        
+        Returns:
+            合并结果
+        """
+        if not self.pr_manager:
+            return {
+                "success": False,
+                "error": "PR管理模块未初始化"
+            }
+        
+        print(f"\n[Orchestrator] 自动合并PR #{pr_number}")
+        
+        return await self.pr_manager.auto_merge_pr(pr_number)
+    
+    async def complete_task_with_pr(
+        self,
+        task_id: str,
+        cleanup: bool = False
+    ) -> Dict:
+        """
+        完成任务并自动创建PR（Phase 3增强版）
+        
+        Args:
+            task_id: 任务ID
+            cleanup: 是否清理worktree
+        
+        Returns:
+            完成结果（包含PR信息）
+        """
+        print(f"\n[Orchestrator] 完成任务（带PR）: {task_id}")
+        
+        result = {
+            "task_id": task_id,
+            "steps": {},
+            "success": False
+        }
+        
+        try:
+            # 1. 标记任务完成
+            task_info = self.task_monitor._load_task(task_id)
+            if not task_info:
+                return {
+                    "success": False,
+                    "error": f"任务不存在: {task_id}"
+                }
+            
+            task_info["status"] = "completed"
+            task_info["completedAt"] = datetime.now().isoformat()
+            self._save_task(task_info)
+            
+            result["steps"]["complete"] = {"success": True}
+            
+            # 2. 自动代码审查（如果启用）
+            if self.auto_review_enabled and self.code_reviewer:
+                print(f"[Orchestrator] 执行代码审查...")
+                review_result = await self.review_code(task_id)
+                result["steps"]["review"] = review_result
+                
+                if not review_result.get("approved"):
+                    result["success"] = False
+                    result["error"] = "代码审查未通过"
+                    return result
+            
+            # 3. 自动CI检查（如果启用）
+            if self.auto_ci_check_enabled and self.cicd_integration:
+                print(f"[Orchestrator] 检查CI状态...")
+                
+                # 等待CI开始
+                await asyncio.sleep(30)
+                
+                ci_result = await self.check_ci(task_id)
+                result["steps"]["ci"] = ci_result
+                
+                # 如果CI失败，尝试处理
+                if ci_result.get("is_failed"):
+                    print(f"[Orchestrator] CI失败，尝试处理...")
+                    handle_result = await self.handle_ci_failure(task_id)
+                    result["steps"]["ci_handling"] = handle_result
+                    
+                    # 重新检查CI状态
+                    ci_result = await self.check_ci(task_id)
+                    result["steps"]["ci_final"] = ci_result
+                
+                # 更新任务CI状态
+                task_info["ci_passed"] = ci_result.get("is_success", False)
+                self._save_task(task_info)
+                
+                if not ci_result.get("is_success"):
+                    result["success"] = False
+                    result["error"] = "CI未通过"
+                    return result
+            
+            # 4. 自动创建PR（如果启用）
+            if self.auto_pr_enabled and self.pr_manager:
+                print(f"[Orchestrator] 创建PR...")
+                pr_result = await self.auto_create_pr(task_id)
+                result["steps"]["pr_create"] = pr_result
+                
+                if pr_result.get("success"):
+                    result["pr_number"] = pr_result.get("pr_number")
+                    result["pr_url"] = pr_result.get("url")
+                    
+                    # 5. 自动合并PR（如果启用且满足条件）
+                    if self.auto_merge_enabled:
+                        print(f"[Orchestrator] 尝试自动合并PR...")
+                        
+                        # 等待一下确保PR状态更新
+                        await asyncio.sleep(10)
+                        
+                        merge_result = await self.auto_merge_pr(pr_result["pr_number"])
+                        result["steps"]["pr_merge"] = merge_result
+                        
+                        if merge_result.get("success"):
+                            result["success"] = True
+                            result["message"] = "任务完成并已自动合并PR"
+                        else:
+                            result["success"] = True
+                            result["message"] = "任务完成，PR已创建但未合并"
+                            result["merge_reason"] = merge_result.get("reason")
+                    else:
+                        result["success"] = True
+                        result["message"] = "任务完成，PR已创建"
+                else:
+                    result["success"] = False
+                    result["error"] = f"创建PR失败: {pr_result.get('error')}"
+            else:
+                result["success"] = True
+                result["message"] = "任务完成（未创建PR）"
+            
+            # 6. 清理资源（如果请求）
+            if cleanup:
+                print(f"[Orchestrator] 清理资源...")
+                
+                # 清理Tmux会话
+                session_name = task_info.get("tmuxSession")
+                if session_name:
+                    self.tmux_manager.kill_session(session_name)
+                
+                # 清理Worktree
+                self.worktree_manager.remove_worktree(task_id, force=True)
+                
+                result["cleanup"] = True
+            
+        except Exception as e:
+            result["error"] = str(e)
+            print(f"[Orchestrator] 完成任务异常: {e}")
+        
+        return result
+    
+    async def list_prs(self, state: str = "open", limit: int = 20) -> List[Dict]:
+        """
+        列出PR列表
+        
+        Args:
+            state: PR状态（open/closed/all）
+            limit: 数量限制
+        
+        Returns:
+            PR列表
+        """
+        if not self.pr_manager:
+            return []
+        
+        result = await self.pr_manager.list_prs(state, limit)
+        
+        return result.get("prs", []) if result.get("success") else []
+    
+    async def get_pr_report(self, pr_number: int) -> str:
+        """
+        获取PR报告
+        
+        Args:
+            pr_number: PR编号
+        
+        Returns:
+            Markdown格式报告
+        """
+        if not self.pr_manager:
+            return "PR管理模块未初始化"
+        
+        # 先更新状态
+        await self.monitor_pr(pr_number)
+        
+        return self.pr_manager.generate_pr_report(pr_number)
 
 
 # 全局实例
